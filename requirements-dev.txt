@@ -1,0 +1,2 @@
+-r rest-version/requirements.txt
+pytest==9.2.0

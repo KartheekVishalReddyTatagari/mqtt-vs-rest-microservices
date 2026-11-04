@@ -30,9 +30,10 @@ MQTT version: each service publishes to a topic on the Mosquitto broker, and the
 
 | Folder | Contents |
 |---|---|
-| `docs/` | Exposé, notes, literature |
-| `common/` | Code shared by both versions: message format, threshold logic, reading generator, result logging |
+| `docs/` | Exposé, `architecture.md` (measurement design), literature |
+| `common/` | Code shared by both versions: message contract, workload trace, open-loop scheduler, threshold logic, result recording |
 | `rest-version/` | Services that communicate over REST (see its README for how to run) |
+| `tests/` | Unit tests and end-to-end acceptance checks (`pytest`) |
 | `mqtt-version/` | Services that communicate over MQTT, plus broker config |
 | `experiments/` | Scripts for load, latency injection, crash tests |
 | `results/` | Collected data and charts |
@@ -42,6 +43,17 @@ MQTT version: each service publishes to a topic on the Mosquitto broker, and the
 - Python 3 (FastAPI for REST, paho-mqtt for MQTT)
 - Eclipse Mosquitto broker
 - Docker and Docker Compose
+
+## Tests
+
+```bash
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements-dev.txt
+.venv/Scripts/python -m pytest
+```
+
+The end-to-end tests start the REST services as local processes, so they run
+without Docker.
 
 ## Timeline
 

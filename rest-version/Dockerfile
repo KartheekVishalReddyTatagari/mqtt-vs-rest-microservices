@@ -15,4 +15,4 @@ COPY rest-version/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY common/ common/
-COPY rest-version/services/ services/
+COPY rest-version/rest_services/ rest_services/
