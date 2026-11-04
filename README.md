@@ -31,7 +31,8 @@ MQTT version: each service publishes to a topic on the Mosquitto broker, and the
 | Folder | Contents |
 |---|---|
 | `docs/` | Exposé, notes, literature |
-| `rest-version/` | Services that communicate over REST |
+| `common/` | Code shared by both versions: message format, threshold logic, reading generator, result logging |
+| `rest-version/` | Services that communicate over REST (see its README for how to run) |
 | `mqtt-version/` | Services that communicate over MQTT, plus broker config |
 | `experiments/` | Scripts for load, latency injection, crash tests |
 | `results/` | Collected data and charts |

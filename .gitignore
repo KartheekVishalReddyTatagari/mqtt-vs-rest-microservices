@@ -14,3 +14,6 @@ Thumbs.db
 # Raw experiment output (keep summaries, not huge raw dumps)
 results/raw/
 *.log
+
+# Default results folder when services run outside Docker
+results-local/

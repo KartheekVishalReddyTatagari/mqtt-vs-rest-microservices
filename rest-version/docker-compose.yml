@@ -1,0 +1,74 @@
+# REST version: Sensor Simulator -> Processing Service -> Alert Service (HTTP POST)
+#
+#   docker compose up --build --abort-on-container-exit --exit-code-from sensor-simulator
+#
+# Every setting can be overridden from the shell or an .env file, e.g. RUN_ID=test1 RATE=100.
+# Results land in ../results/raw/rest/<RUN_ID>/. Use a new RUN_ID for every run:
+# the CSVs are appended to, so reusing an id mixes two runs.
+
+name: rest-version
+
+x-env: &env
+  RUN_ID: ${RUN_ID:-dev}
+  RESULTS_DIR: /results
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  THRESHOLD: ${THRESHOLD:-30}
+  REQUEST_TIMEOUT_S: ${REQUEST_TIMEOUT_S:-5}
+  RETRY_ENABLED: ${RETRY_ENABLED:-false}
+  MAX_RETRIES: ${MAX_RETRIES:-5}
+  RETRY_BACKOFF_S: ${RETRY_BACKOFF_S:-0.1}
+  RETRY_BACKOFF_MAX_S: ${RETRY_BACKOFF_MAX_S:-2}
+
+x-service: &service
+  build:
+    context: ..
+    dockerfile: rest-version/Dockerfile
+  image: mqtt-vs-rest/rest:latest
+  volumes:
+    - ../results/raw/rest/${RUN_ID:-dev}:/results
+  cap_add:
+    - NET_ADMIN   # lets Phase 3 scripts run `tc netem` inside the container
+
+x-healthcheck: &healthcheck
+  test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+  interval: 2s
+  timeout: 3s
+  retries: 15
+
+services:
+  alert:
+    <<: *service
+    command: ["uvicorn", "services.alert:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    environment:
+      <<: *env
+    healthcheck: *healthcheck
+
+  processing:
+    <<: *service
+    command: ["uvicorn", "services.processing:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    environment:
+      <<: *env
+      ALERT_URL: http://alert:8000/events
+    healthcheck: *healthcheck
+    depends_on:
+      alert:
+        condition: service_healthy
+
+  sensor-simulator:
+    <<: *service
+    command: ["python", "-m", "services.sensor_simulator"]
+    environment:
+      <<: *env
+      TARGET_URL: http://processing:8000/readings
+      # Must exceed Processing's own timeout (plus its retries), otherwise the simulator
+      # gives up before Processing can report that the Alert Service is down.
+      REQUEST_TIMEOUT_S: ${SIM_REQUEST_TIMEOUT_S:-30}
+      RATE: ${RATE:-10}
+      DURATION_S: ${DURATION_S:-10}
+      SEED: ${SEED:-42}
+      SENSOR_COUNT: ${SENSOR_COUNT:-5}
+      SPIKE_PROBABILITY: ${SPIKE_PROBABILITY:-0.02}
+    depends_on:
+      processing:
+        condition: service_healthy
+    restart: "no"
