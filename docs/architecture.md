@@ -150,9 +150,9 @@ row and capped throughput at a few hundred messages per second.
 ## 8. Service endpoints
 
 `GET /health` (process alive), `GET /ready` (can accept work; used by the Compose
-healthchecks), `GET /stats` (counters and clock info). The MQTT services will
-expose the same endpoints over HTTP for orchestration only; they are not part of
-the measured data path.
+healthchecks), `GET /stats` (counters and clock info). The MQTT services expose
+the same endpoints over HTTP for orchestration only; they are not part of the
+measured data path.
 
 ## 9. Frozen decisions
 
@@ -166,5 +166,33 @@ the measured data path.
 | REST reliability | No-retry baseline, plus bounded retry with jitter and a stable `msg_id` |
 | MQTT reliability | QoS 1 main condition; QoS 0 and 2 in the QoS study |
 | Network impairment | Same `tc netem` rule on every container's interface (see the report's limitations); the MQTT path has 4 hops vs REST's 2, an inherent property of the broker architecture |
-| Repetitions | 5 per configuration; 10 for E1 if time allows |
+| Repetitions | 3 in the reduced campaign; 5 (10 for E1) in the full campaign |
 | Out of scope | Fan-out, dead-letter handling, payload-size variation, dashboard, TLS, clustering |
+
+## 10. Experiments and analysis
+
+| Exp | RQ | Varies | Measures |
+|---|---|---|---|
+| E1 | RQ1, RQ3 | REST vs MQTT QoS 1 x 10/100/500/1000 msg/s | latency, throughput, producer health, CPU, memory |
+| E2 | RQ1 | REST vs MQTT QoS 1 at 100 msg/s x delay 50/100 ms, loss 1/5 %, 50 ms + 1 % | latency and delivery under impairment |
+| E3 | RQ2 | REST, REST + retry, MQTT QoS 0, QoS 1 x Alert or Processing SIGKILLed x outage length | loss, duplicates, recovery, backlog drain |
+| E4 | RQ3 | collected in every run | CPU and memory per container and per architecture |
+| E5 | RQ4 | MQTT QoS 0/1/2 x 100/1000 msg/s x no loss / 1 % loss | latency, delivery, CPU |
+| E6 | MQTT only | broker stopped gracefully vs killed, QoS 1 | loss, recovery, persistence |
+
+Runner (`experiments/runner.py`): clean up, start long-running services and wait
+for readiness, apply netem from a sidecar to every container, measure the
+host-container clock offset, start CPU/memory sampling, start the simulator
+(3 s pause so netem reaches it too), inject the fault at its scheduled second,
+wait for the simulator, drain (all received, or 5 s without a new message, at
+most 90 s), stop gracefully, save logs, export results, write `meta.json`.
+Run order is shuffled within each experiment; finished runs are skipped on restart.
+
+Analysis (`experiments/analysis/`): first 5 s excluded from steady-state latency;
+statistics on run-level values (one p95 per run), mean, SD, median, IQR and 95 % CI
+per configuration; REST vs MQTT with Welch's t, Mann-Whitney U, Cohen's d and
+Cliff's delta. Recovery time = from readiness until delivery >= 95 % of the
+pre-fault rate for 10 consecutive seconds; backlog drain = from readiness until
+the last message dispatched during the outage has arrived. System CPU/memory =
+sum of the per-service means of Processing, Alert and (MQTT) broker; the
+simulator is reported separately.

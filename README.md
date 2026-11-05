@@ -12,12 +12,13 @@ The same small system is built twice, then both versions are tested under the sa
 [Sensor Simulator] --> [Processing Service] --> [Alert Service]
 ```
 
-- **Sensor Simulator**: generates fake sensor readings (e.g. temperature)
-- **Processing Service**: checks readings against a threshold
-- **Alert Service**: logs and receives alerts
+- **Sensor Simulator**: replays a deterministic trace of temperature readings at a fixed rate (open loop)
+- **Processing Service**: checks each reading against a threshold and forwards every reading
+- **Alert Service**: records every delivery (latency, duplicates) and counts alerts
 
-REST version: each service calls the next one with HTTP POST.
-MQTT version: each service publishes to a topic on the Mosquitto broker, and the next one subscribes.
+REST version: each service calls the next one with HTTP POST (FastAPI, aiohttp).
+MQTT version: each service publishes to a topic on the Mosquitto broker and the next one subscribes (MQTT 5.0, paho-mqtt).
+Everything except the transport is shared code in `common/`. Design and measurement rules: `docs/architecture.md`.
 
 ## Research questions
 
@@ -32,33 +33,53 @@ MQTT version: each service publishes to a topic on the Mosquitto broker, and the
 |---|---|
 | `docs/` | Exposé, `architecture.md` (measurement design), literature |
 | `common/` | Code shared by both versions: message contract, workload trace, open-loop scheduler, threshold logic, result recording |
-| `rest-version/` | Services that communicate over REST (see its README for how to run) |
+| `rest-version/` | Services that communicate over REST (see its README) |
 | `mqtt-version/` | Services that communicate over MQTT, plus the Mosquitto config (see its README) |
+| `experiments/` | Runner, resource monitor, campaign configs (`config/`), analysis pipeline (`analysis/`) |
 | `tests/` | Unit tests and end-to-end acceptance checks (`pytest`) |
-| `mqtt-version/` | Services that communicate over MQTT, plus broker config |
-| `experiments/` | Scripts for load, latency injection, crash tests |
-| `results/` | Collected data and charts |
+| `results/` | `raw/` run data (not in git), `processed/` tables and `summary.md`, `figures/` |
 
 ## Tech stack
 
-- Python 3 (FastAPI for REST, paho-mqtt for MQTT)
-- Eclipse Mosquitto broker
+- Python 3.12 in the containers (FastAPI + uvicorn + aiohttp for REST, paho-mqtt 2.2.0 for MQTT)
+- Eclipse Mosquitto 2.0.20
 - Docker and Docker Compose
+- pandas, SciPy and matplotlib for the analysis
+
+## Running the experiments
+
+Requires Docker Desktop (with WSL 2 on Windows).
+
+```bash
+# whole campaign; finished runs are skipped if it is restarted
+python experiments/runner.py --campaign experiments/config/campaign-reduced.json   # ~3.5 h
+python experiments/runner.py --campaign experiments/config/campaign-full.json      # ~13 h, plan-compliant
+
+# a single configuration
+python experiments/runner.py --profile mqtt-q1 --rate 500 --duration 120 --repetitions 10 --outage alert:30:10
+
+# list the runs and the estimated time without running anything
+python experiments/runner.py --campaign experiments/config/campaign-full.json --dry-run
+```
+
+Profiles: `rest`, `rest-retry`, `mqtt-q0`, `mqtt-q1`, `mqtt-q2`. Network profiles: `delay50`,
+`delay100`, `loss1`, `loss5`, `delay50-loss1`. Each run is written to
+`results/raw/<campaign>/<experiment>/<run id>/` with a `meta.json` describing it completely.
+
+## Analysis
+
+```bash
+python experiments/analysis/report.py results/raw/reduced
+```
+
+Writes `results/processed/<campaign>/` (run metrics, per-configuration summaries with 95% CIs,
+REST-vs-MQTT comparisons, outage table, `summary.md`) and `results/figures/<campaign>/`.
 
 ## Tests
 
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install -r requirements-dev.txt
-.venv/Scripts/python -m pytest
+.venv/Scripts/python -m pytest              # fast tests, no Docker needed
+.venv/Scripts/python -m pytest -m docker    # end-to-end tests against the Docker stacks
 ```
-
-The end-to-end tests start the REST services as local processes, so they run
-without Docker.
-
-## Timeline
-
-- Weeks 1-2: literature review, setup, REST version
-- Weeks 3-4: MQTT version
-- Weeks 5-6: experiments and data collection
-- Final weeks: analysis and write-up
