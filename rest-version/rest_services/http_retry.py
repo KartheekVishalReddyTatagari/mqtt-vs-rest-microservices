@@ -74,7 +74,9 @@ class PostResult:
 
 def make_session(timeout_s: float) -> aiohttp.ClientSession:
     """Must be called inside a running event loop."""
-    connector = aiohttp.TCPConnector(limit=env_int("HTTP_MAX_CONNECTIONS", 200), ttl_dns_cache=300)
+    # Short DNS cache: a restarted container may get a new IP address, and a long
+    # cache would keep sending to the old one long after the service is back.
+    connector = aiohttp.TCPConnector(limit=env_int("HTTP_MAX_CONNECTIONS", 200), ttl_dns_cache=2)
     return aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=timeout_s))
 
 

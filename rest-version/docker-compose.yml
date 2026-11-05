@@ -75,6 +75,7 @@ services:
       SPIKE_PROBABILITY: ${SPIKE_PROBABILITY:-0.02}
       MAX_IN_FLIGHT: ${MAX_IN_FLIGHT:-1000}
       MISSED_DEADLINE_MS: ${MISSED_DEADLINE_MS:-10}
+      START_DELAY_S: ${START_DELAY_S:-0}
     depends_on:
       processing:
         condition: service_healthy

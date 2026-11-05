@@ -1,0 +1,26 @@
+{
+  "name": "reduced",
+  "description": "Shortened campaign that fits in about 3.5 hours: 3 repetitions, 60 s runs, outages of 10 s and 30 s. Same structure as campaign-full.json.",
+  "order_seed": 7,
+  "defaults": {"duration_s": 60, "repetitions": 3, "seed": 42, "sensor_count": 5, "warmup_s": 5},
+  "experiments": [
+    {"id": "E1", "note": "RQ1 baseline latency/throughput, RQ3 resources",
+     "matrix": {"profile": ["rest", "mqtt-q1"], "rate": [10, 100, 500, 1000]}},
+
+    {"id": "E2", "note": "RQ1 under network impairment (same netem on every container)", "rate": 100,
+     "matrix": {"profile": ["rest", "mqtt-q1"], "netem": ["delay50", "delay100", "loss1", "loss5", "delay50-loss1"]}},
+
+    {"id": "E3", "note": "RQ2 application-service outage (SIGKILL), restart after outage_s", "rate": 200,
+     "fault_start_s": 20, "tail_s": 30,
+     "matrix": {"profile": ["rest", "rest-retry", "mqtt-q0", "mqtt-q1"], "target": ["alert", "processing"],
+                "outage_s": [10, 30]}},
+
+    {"id": "E5", "note": "RQ4 QoS 0/2 at two rates, with and without 1% loss (QoS 1 comes from E1/E2 and below)",
+     "matrix": {"profile": ["mqtt-q0", "mqtt-q2"], "rate": [100, 1000], "netem": ["none", "loss1"]}},
+    {"id": "E5", "matrix": {"profile": ["mqtt-q1"], "rate": [1000], "netem": ["loss1"]}},
+
+    {"id": "E6", "note": "MQTT-only: broker outage, graceful (SIGTERM) vs abrupt (SIGKILL)", "rate": 200,
+     "fault_start_s": 20, "tail_s": 30,
+     "matrix": {"profile": ["mqtt-q1"], "broker_mode": ["graceful", "abrupt"], "broker_down_s": [10]}}
+  ]
+}

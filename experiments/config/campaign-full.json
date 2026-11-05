@@ -1,0 +1,23 @@
+{
+  "name": "full",
+  "description": "Plan-compliant campaign (design plan section 7): 5 repetitions (10 for E1), 120 s baseline runs, outages of 10/30/60 s. Takes roughly 13 hours; run overnight.",
+  "order_seed": 11,
+  "defaults": {"duration_s": 120, "repetitions": 5, "seed": 42, "sensor_count": 5, "warmup_s": 10},
+  "experiments": [
+    {"id": "E1", "repetitions": 10,
+     "matrix": {"profile": ["rest", "mqtt-q1"], "rate": [10, 100, 500, 1000]}},
+
+    {"id": "E2", "rate": 100,
+     "matrix": {"profile": ["rest", "mqtt-q1"], "netem": ["delay50", "delay100", "loss1", "loss5", "delay50-loss1"]}},
+
+    {"id": "E3", "rate": 200, "fault_start_s": 30, "tail_s": 40,
+     "matrix": {"profile": ["rest", "rest-retry", "mqtt-q0", "mqtt-q1"], "target": ["alert", "processing"],
+                "outage_s": [10, 30, 60]}},
+
+    {"id": "E5",
+     "matrix": {"profile": ["mqtt-q0", "mqtt-q1", "mqtt-q2"], "rate": [100, 1000], "netem": ["none", "loss1"]}},
+
+    {"id": "E6", "rate": 200, "fault_start_s": 30, "tail_s": 40,
+     "matrix": {"profile": ["mqtt-q1"], "broker_mode": ["graceful", "abrupt"], "broker_down_s": [10, 30]}}
+  ]
+}

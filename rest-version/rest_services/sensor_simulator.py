@@ -74,6 +74,8 @@ async def main() -> None:
 
         log.info("waiting for %s", ready_url)
         await wait_until_ready(session, ready_url, env_float("STARTUP_TIMEOUT_S", 60.0))
+        # Pause before the first message so the runner can apply netem to this container.
+        await asyncio.sleep(env_float("START_DELAY_S", 0.0))
         log.info("run %s: replaying trace %s, %d messages at %.1f msg/s, retry=%s",
                  run_id, spec.trace_id, spec.total, spec.rate, policy.enabled)
         started_wall_ns = time.time_ns()

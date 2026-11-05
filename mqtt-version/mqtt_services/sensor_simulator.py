@@ -74,6 +74,8 @@ async def main() -> None:
     start(client, settings)
     log.info("waiting for broker %s:%d", settings.host, settings.port)
     await asyncio.wait_for(connected.wait(), env_float("STARTUP_TIMEOUT_S", 60.0))
+    # Pause before the first message so the runner can apply netem to this container.
+    await asyncio.sleep(env_float("START_DELAY_S", 0.0))
 
     async def dispatch(item: TraceItem, scheduled: int, sent: int) -> bool:
         reading = build_reading(run_id, item, spec.unit, event_ts_ns=time.time_ns(), sent_mono_ns=sent)
