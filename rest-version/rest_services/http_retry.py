@@ -1,5 +1,9 @@
 """HTTP POST with a bounded retry policy, used for both REST hops.
 
+Client library: aiohttp. httpx was tried first, but at ~2 ms of CPU per
+request it saturated the Sensor Simulator at ~500 msg/s, making the load
+generator, not the architecture, the bottleneck.
+
 RETRY_ENABLED=false gives the no-retry baseline; true gives bounded
 exponential backoff with full jitter (a random wait between 0 and the
 exponential cap), which avoids synchronised retry bursts.
@@ -15,7 +19,7 @@ import asyncio
 import random
 from dataclasses import dataclass
 
-import httpx
+import aiohttp
 
 from common.config import env_bool, env_float, env_int
 
@@ -68,24 +72,23 @@ class PostResult:
         return ";".join(self.history)
 
 
-def make_client(timeout_s: float) -> httpx.AsyncClient:
-    connections = env_int("HTTP_MAX_CONNECTIONS", 200)
-    return httpx.AsyncClient(
-        timeout=timeout_s,
-        limits=httpx.Limits(max_connections=connections, max_keepalive_connections=connections),
-    )
+def make_session(timeout_s: float) -> aiohttp.ClientSession:
+    """Must be called inside a running event loop."""
+    connector = aiohttp.TCPConnector(limit=env_int("HTTP_MAX_CONNECTIONS", 200), ttl_dns_cache=300)
+    return aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=timeout_s))
 
 
-async def post(client: httpx.AsyncClient, url: str, body: bytes, policy: RetryPolicy) -> PostResult:
+async def post(session: aiohttp.ClientSession, url: str, body: bytes, policy: RetryPolicy) -> PostResult:
     history: list[str] = []
     while True:
         try:
-            response = await client.post(url, content=body, headers=JSON_HEADERS)
-            history.append(str(response.status_code))
-            if response.is_success:
-                return PostResult(True, tuple(history))
-            transient = response.status_code in TRANSIENT_STATUSES
-        except httpx.TransportError as exc:
+            async with session.post(url, data=body, headers=JSON_HEADERS) as response:
+                await response.read()
+                history.append(str(response.status))
+                if 200 <= response.status < 300:
+                    return PostResult(True, tuple(history))
+                transient = response.status in TRANSIENT_STATUSES
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             history.append(type(exc).__name__)
             transient = True
         if not transient or len(history) >= policy.max_attempts:

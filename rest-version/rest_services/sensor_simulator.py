@@ -15,8 +15,9 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
-import httpx
+import aiohttp
 
+from common import aio
 from common.clock import clock_info
 from common.config import env_float, env_int, env_str
 from common.logsetup import setup_logging
@@ -24,18 +25,19 @@ from common.messages import SCHEMA_VERSION, encode
 from common.results import SENT_COLUMNS, CsvLog, write_json
 from common.scheduler import run_open_loop
 from common.workload import TraceItem, WorkloadSpec, build_reading, generate_trace, write_trace
-from rest_services.http_retry import RetryPolicy, make_client, post
+from rest_services.http_retry import RetryPolicy, make_session, post
 
 log = logging.getLogger("simulator")
 
 
-async def wait_until_ready(client: httpx.AsyncClient, url: str, timeout_s: float) -> None:
+async def wait_until_ready(session: aiohttp.ClientSession, url: str, timeout_s: float) -> None:
     deadline = time.monotonic() + timeout_s
     while True:
         try:
-            if (await client.get(url)).is_success:
-                return
-        except httpx.HTTPError:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    return
+        except (aiohttp.ClientError, asyncio.TimeoutError):
             pass
         if time.monotonic() > deadline:
             raise TimeoutError(f"{url} not ready after {timeout_s}s")
@@ -58,11 +60,11 @@ async def main() -> None:
     write_trace(results_dir / "trace.csv", trace)
     sent_log = CsvLog(results_dir / "sent.csv", SENT_COLUMNS)
 
-    async with make_client(timeout_s) as client:
+    async with make_session(timeout_s) as session:
 
         async def dispatch(item: TraceItem, scheduled: int, sent: int) -> bool:
             reading = build_reading(run_id, item, spec.unit, event_ts_ns=time.time_ns(), sent_mono_ns=sent)
-            result = await post(client, target_url, encode(reading.to_dict()), policy)
+            result = await post(session, target_url, encode(reading.to_dict()), policy)
             sent_log.write([
                 run_id, reading.msg_id, item.sensor_id, item.seq, item.index, item.value,
                 scheduled, sent, f"{(sent - scheduled) / 1e6:.3f}", reading.event_ts_ns,
@@ -71,7 +73,7 @@ async def main() -> None:
             return result.ok
 
         log.info("waiting for %s", ready_url)
-        await wait_until_ready(client, ready_url, env_float("STARTUP_TIMEOUT_S", 60.0))
+        await wait_until_ready(session, ready_url, env_float("STARTUP_TIMEOUT_S", 60.0))
         log.info("run %s: replaying trace %s, %d messages at %.1f msg/s, retry=%s",
                  run_id, spec.trace_id, spec.total, spec.rate, policy.enabled)
         started_wall_ns = time.time_ns()
@@ -86,7 +88,8 @@ async def main() -> None:
         "architecture": "rest",
         "trace_id": spec.trace_id,
         "workload": {**asdict(spec), "total": spec.total},
-        "transport": {**policy.as_dict(), "request_timeout_s": timeout_s, "max_in_flight": max_in_flight},
+        "transport": {**policy.as_dict(), "request_timeout_s": timeout_s, "max_in_flight": max_in_flight,
+                      "client": f"aiohttp {aiohttp.__version__}"},
         "expected_alerts": sum(item.is_spike for item in trace),
         "producer": producer,
         "started_wall_ns": started_wall_ns,
@@ -99,4 +102,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    aio.run(main())

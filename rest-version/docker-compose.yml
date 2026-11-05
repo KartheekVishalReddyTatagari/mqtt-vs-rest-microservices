@@ -2,15 +2,20 @@
 #
 #   docker compose up --build --abort-on-container-exit --exit-code-from sensor-simulator
 #
-# Every setting can be overridden from the shell or an .env file, e.g. RUN_ID=test1 RATE=100.
-# Results land in ../results/raw/rest/<RUN_ID>/. Use a new RUN_ID for every run:
-# the CSVs are appended to, so reusing an id mixes two runs.
+# Settings come from the shell or an .env file, e.g. RUN_ID=test1 RATE=100.
+# Normally the experiment runner (experiments/runner.py) drives this file.
+#
+# Results are written to the Docker volume "mqtt-vs-rest-results" under
+# rest/<RUN_ID>/, not to a Windows folder: writing through the Windows file
+# share costs milliseconds per row and capped throughput at a few hundred
+# messages per second. Copy a run out with:
+#   python experiments/export_results.py rest/<RUN_ID>
 
 name: rest-version
 
 x-env: &env
   RUN_ID: ${RUN_ID:-dev}
-  RESULTS_DIR: /results
+  RESULTS_DIR: /results/rest/${RUN_ID:-dev}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   THRESHOLD: ${THRESHOLD:-30}
   RETRY_ENABLED: ${RETRY_ENABLED:-false}
@@ -24,7 +29,7 @@ x-service: &service
     dockerfile: rest-version/Dockerfile
   image: mqtt-vs-rest/rest:latest
   volumes:
-    - ../results/raw/rest/${RUN_ID:-dev}:/results
+    - results:/results
   cap_add:
     - NET_ADMIN   # lets the experiment runner apply `tc netem` inside the container
 
@@ -74,3 +79,7 @@ services:
       processing:
         condition: service_healthy
     restart: "no"
+
+volumes:
+  results:
+    name: mqtt-vs-rest-results

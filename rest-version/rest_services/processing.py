@@ -25,7 +25,7 @@ from common.config import env_float, env_str
 from common.logsetup import setup_logging
 from common.messages import InvalidMessage, Reading, decode, encode
 from common.results import ProcessingRecorder, write_json
-from rest_services.http_retry import RetryPolicy, make_client, post
+from rest_services.http_retry import RetryPolicy, make_session, post
 
 setup_logging("processing")
 log = logging.getLogger("processing")
@@ -53,12 +53,12 @@ def _note_failure(detail: str) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.recorder = ProcessingRecorder(RESULTS_DIR)
-    app.state.client = make_client(env_float("REQUEST_TIMEOUT_S", 5.0))
+    app.state.session = make_session(env_float("REQUEST_TIMEOUT_S", 5.0))
     app.state.ready = True
     log.info("forwarding to %s, threshold=%.2f, retry=%s", ALERT_URL, THRESHOLD, POLICY.enabled)
     yield
     app.state.ready = False
-    await app.state.client.aclose()
+    await app.state.session.close()
     stats = app.state.recorder.stats()
     app.state.recorder.close()
     write_json(RESULTS_DIR / "processing_summary.json", {"architecture": "rest", **stats})
@@ -95,7 +95,7 @@ async def readings(request: Request) -> Response:
         return Response(status_code=422, content=str(exc))
 
     event = logic.process(reading, THRESHOLD, received)
-    result = await post(app.state.client, ALERT_URL, encode(event.to_dict()), POLICY)
+    result = await post(app.state.session, ALERT_URL, encode(event.to_dict()), POLICY)
     recorder.record(event, result.ok, result.attempts, result.detail, time.monotonic_ns())
     if not result.ok:
         _note_failure(result.history[-1])

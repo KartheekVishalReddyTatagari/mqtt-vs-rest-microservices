@@ -1,53 +1,78 @@
 import asyncio
 import random
+import socket
 
-import httpx
 import pytest
+from aiohttp import web
 
-from rest_services.http_retry import RetryPolicy, post
+from rest_services.http_retry import RetryPolicy, make_session, post
 
 FAST = RetryPolicy(enabled=True, max_retries=3, backoff_s=0.001, backoff_max_s=0.002)
 OFF = RetryPolicy(enabled=False, max_retries=3, backoff_s=0.001, backoff_max_s=0.002)
 
 
-def run_post(responses, policy):
-    """POST against a fake server that answers with the given sequence."""
-    calls = []
-    answers = iter(responses)
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
-    def handler(request):
-        calls.append(request.content)
-        answer = next(answers)
-        if isinstance(answer, Exception):
-            raise answer
-        return httpx.Response(answer)
+
+def run_post(statuses, policy):
+    """POST against a local server that answers with the given status sequence."""
+    bodies = []
+    answers = iter(statuses)
+
+    async def handler(request):
+        bodies.append(await request.read())
+        return web.Response(status=next(answers))
 
     async def go():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            return await post(client, "http://x/readings", b'{"msg_id":"m1"}', policy)
+        app = web.Application()
+        app.router.add_post("/readings", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        port = free_port()
+        await web.TCPSite(runner, "127.0.0.1", port).start()
+        try:
+            async with make_session(5) as session:
+                return await post(session, f"http://127.0.0.1:{port}/readings", b'{"msg_id":"m1"}', policy)
+        finally:
+            await runner.cleanup()
 
-    return asyncio.run(go()), calls
+    return asyncio.run(go()), bodies
 
 
-def test_transient_errors_are_retried_with_the_same_body():
-    result, calls = run_post([httpx.ConnectError("down"), 503, 204], FAST)
-    assert result.ok and result.history == ("ConnectError", "503", "204")
-    assert len(set(calls)) == 1   # same msg_id on every attempt
+def test_transient_statuses_are_retried_with_the_same_body():
+    result, bodies = run_post([503, 502, 204], FAST)
+    assert result.ok and result.history == ("503", "502", "204")
+    assert len(bodies) == 3 and len(set(bodies)) == 1   # same msg_id on every attempt
 
 
 def test_client_errors_are_not_retried():
-    result, calls = run_post([422, 204], FAST)
-    assert not result.ok and result.history == ("422",) and len(calls) == 1
+    result, bodies = run_post([422, 204], FAST)
+    assert not result.ok and result.history == ("422",) and len(bodies) == 1
 
 
 def test_attempts_are_bounded():
-    result, calls = run_post([503] * 10, FAST)
-    assert not result.ok and result.attempts == 4 and len(calls) == 4
+    result, bodies = run_post([503] * 10, FAST)
+    assert not result.ok and result.attempts == 4 and len(bodies) == 4
 
 
 def test_no_retry_baseline_makes_one_attempt():
-    result, calls = run_post([503, 204], OFF)
-    assert not result.ok and len(calls) == 1
+    result, bodies = run_post([503, 204], OFF)
+    assert not result.ok and len(bodies) == 1
+
+
+def test_connection_errors_are_transient():
+    async def go():
+        async with make_session(2) as session:
+            return await post(session, f"http://127.0.0.1:{free_port()}/readings", b"{}", FAST)
+
+    result = asyncio.run(go())
+    assert not result.ok and result.attempts == 4
+    # Linux refuses instantly (ClientConnectorError); Windows retries the SYN
+    # and may hit the timeout first. Either way it is a transport error, not a status.
+    assert all(not outcome.isdigit() for outcome in result.history)
 
 
 @pytest.mark.parametrize("attempt,cap", [(1, 0.1), (2, 0.2), (3, 0.4), (10, 2.0)])
