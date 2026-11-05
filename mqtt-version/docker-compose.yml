@@ -32,9 +32,13 @@ x-service: &service
   cap_add:
     - NET_ADMIN
 
+# Probe every second until healthy, then once a minute. A probe every 2 s
+# (a new python process each time) showed up as a CPU floor in docker stats.
 x-readycheck: &readycheck
   test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=2)"]
-  interval: 2s
+  interval: 60s
+  start_period: 60s
+  start_interval: 1s
   timeout: 3s
   retries: 15
 
@@ -46,7 +50,9 @@ services:
       - broker-data:/mosquitto/data
     healthcheck:
       test: ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "healthcheck", "-m", "ok", "-q", "0"]
-      interval: 2s
+      interval: 60s
+      start_period: 60s
+      start_interval: 1s
       timeout: 3s
       retries: 15
 
