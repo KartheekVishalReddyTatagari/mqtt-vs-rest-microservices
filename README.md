@@ -33,6 +33,7 @@ MQTT version: each service publishes to a topic on the Mosquitto broker, and the
 | `docs/` | Exposé, `architecture.md` (measurement design), literature |
 | `common/` | Code shared by both versions: message contract, workload trace, open-loop scheduler, threshold logic, result recording |
 | `rest-version/` | Services that communicate over REST (see its README for how to run) |
+| `mqtt-version/` | Services that communicate over MQTT, plus the Mosquitto config (see its README) |
 | `tests/` | Unit tests and end-to-end acceptance checks (`pytest`) |
 | `mqtt-version/` | Services that communicate over MQTT, plus broker config |
 | `experiments/` | Scripts for load, latency injection, crash tests |

@@ -1,0 +1,6 @@
+# Files read inside Linux containers must keep LF line endings on Windows checkouts
+# (a CR at the end of a mosquitto.conf or shell line breaks parsing).
+*.sh        text eol=lf
+*.conf      text eol=lf
+*.yml       text eol=lf
+Dockerfile  text eol=lf

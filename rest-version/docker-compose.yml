@@ -82,4 +82,7 @@ services:
 
 volumes:
   results:
+    # external: created once with `docker volume create mqtt-vs-rest-results`,
+    # so `docker compose down -v` can never delete collected results
     name: mqtt-vs-rest-results
+    external: true

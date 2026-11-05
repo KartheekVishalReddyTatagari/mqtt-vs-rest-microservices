@@ -27,12 +27,23 @@ Sensor Simulator --POST /readings--> Processing Service --POST /events--> Alert 
 Processing answers the simulator only after the Alert Service has answered, so
 an Alert outage propagates back to the simulator as 502.
 
-**MQTT** (Day 2): broker-mediated publish/subscribe.
+**MQTT:** broker-mediated publish/subscribe (MQTT 5.0, Mosquitto 2.0.20, paho-mqtt 2.2.0).
 
 ```
 Sensor Simulator --publish sensors/{sensor_id}/readings--> Mosquitto --> Processing Service
 Processing Service --publish processed/readings--> Mosquitto --> Alert Service
 ```
+
+Stable client ids, persistent sessions (`clean_start=False`, session expiry 300 s),
+retain off, the same QoS on every publish and subscription. Processing acknowledges
+an incoming message only after the broker accepted its forward; Alert acknowledges
+only after recording. A fresh broker per run (its volume is removed) means no
+session leaks from one run into the next.
+
+**Transport fairness.** Both stacks disable Nagle's algorithm (`TCP_NODELAY`):
+asyncio/aiohttp do it by default, paho-mqtt does not, so the MQTT clients set it
+explicitly. Without it, QoS 1 p95 latency was 11.5 ms instead of 2.1 ms. Both
+stacks use one Python 3.12 base image and uvloop where an event loop is used.
 
 ## 3. Message contract (schema_version 1)
 
@@ -105,7 +116,9 @@ hosts (e.g. the Windows host and a container) are never subtracted.
 |---|---|---|
 | REST, no retry | One attempt; failure means loss | Baseline (`RETRY_ENABLED=false`) |
 | REST, retry | Up to `MAX_RETRIES`; exponential backoff with full jitter, capped; same body (same `msg_id`) every attempt; retries transport errors and 429/500/502/503/504 only | Every attempt is recorded (`detail` = e.g. `ConnectError;503;204`) |
-| MQTT QoS 0 / 1 / 2 | At most once / at least once / exactly once *per MQTT exchange* | Day 2. QoS 1 is the main resilience setting. QoS 2 is not end-to-end exactly-once processing |
+| MQTT QoS 0 | At most once; publish while disconnected drops the message; nothing queued for an offline subscriber | Performance baseline |
+| MQTT QoS 1 | At least once; broker queues for offline subscribers; manual ack after forwarding/recording; duplicates possible | Main resilience condition |
+| MQTT QoS 2 | Exactly once *per MQTT exchange*; paho keeps PUBREC state in memory only, so a process restart between PUBREC and PUBREL can lose the message | QoS study; not end-to-end exactly-once |
 
 With retries on both REST hops, one message can cause up to (1 + MAX_RETRIES)²
 calls to the Alert Service during an outage. This is reported as retry
@@ -129,7 +142,10 @@ versions pay this cost equally.
 
 Each service writes only its own files; no two containers append to one CSV.
 Rows are flushed immediately, so a killed container loses nothing it already
-recorded.
+recorded. Files live on the Docker volume `mqtt-vs-rest-results` (native Linux
+storage); writing through the Windows file share instead cost milliseconds per
+row and capped throughput at a few hundred messages per second.
+`experiments/export_results.py` copies a run to `results/raw/`.
 
 ## 8. Service endpoints
 
