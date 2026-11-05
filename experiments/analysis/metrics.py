@@ -15,10 +15,19 @@ Definitions
 - throughput: unique messages received per second over the measured window
 - ack latency: protocol acknowledgement (HTTP response / PUBACK / PUBCOMP)
   minus dispatch, reported separately, never as delivery
-- recovery time: from the restarted service being ready until delivery runs at
-  >= 95% of the pre-fault rate for 10 consecutive seconds (plan, section 6)
-- backlog drain time: from readiness until the last message dispatched during
-  the outage has arrived
+- outage window: from the kill until the restarted service is ready; a reading
+  belongs to it when it was DUE (scheduled) in that window, whether or not the
+  producer managed to send it on time
+- recovery time: from the restart command until delivery runs at >= 95% of the
+  pre-fault rate for 10 consecutive seconds (plan, section 6). Measured from the
+  restart, not from readiness: readiness is polled from the host and the MQTT
+  backlog often arrived before the poll noticed. The readiness-based variants are
+  kept as *_from_ready_s (clamped at 0)
+- backlog drain time: from the restart command until the last reading due in the
+  outage window has arrived
+- backlog max age: the oldest such reading at arrival, measured from when it was
+  due (scheduled), so time spent blocked in the producer counts; backlog max
+  latency is the same from dispatch
 """
 
 import json
@@ -202,13 +211,15 @@ def _resource_metrics(run: Run) -> dict:
 def _fault_metrics(run: Run, first: pd.DataFrame, t0: int) -> dict:
     events = {e["event"]: e for e in run.meta["events"]}
     down = _event_rel_s(run, events["service_down"], t0)
+    restart = _event_rel_s(run, events["restart"], t0) if events.get("restart", {}).get("host_wall_ns") else None
     ready = _event_rel_s(run, events["ready"], t0) if events.get("ready", {}).get("host_wall_ns") else None
-    out = {"fault_down_s": down, "fault_ready_s": ready,
+    out = {"fault_down_s": down, "fault_restart_s": restart, "fault_ready_s": ready,
            "fault_unavailable_s": (ready - down) if ready is not None else None}
-    sent_rel = (run.sent["sent_mono_ns"] - t0) / 1e9
-    during = run.sent[(sent_rel >= down) & (sent_rel < (ready if ready is not None else sent_rel.max()))]
+    due_rel = (run.sent["scheduled_mono_ns"] - t0) / 1e9
+    window_end = ready if ready is not None else due_rel.max()
+    during = run.sent[(due_rel >= down) & (due_rel < window_end)]
     got = set(first["msg_id"]) if len(first) else set()
-    out["sent_during_outage"] = len(during)
+    out["due_during_outage"] = len(during)
     out["lost_during_outage"] = int((~during["msg_id"].isin(got)).sum())
     if not len(first):
         return out
@@ -217,21 +228,31 @@ def _fault_metrics(run: Run, first: pd.DataFrame, t0: int) -> dict:
     pre = per_second[(per_second.index >= max(1, int(down) - 15)) & (per_second.index < int(down))]
     baseline = float(pre.mean()) if len(pre) else float("nan")
     out["pre_fault_rate"] = baseline
-    if ready is not None and baseline == baseline:
-        seconds = np.arange(int(np.ceil(ready)), int(recv_rel.max()) + 1)
+
+    def recovery_from(ref: float) -> float | None:
+        seconds = np.arange(int(np.ceil(ref)), int(recv_rel.max()) + 1)
         counts = per_second.reindex(seconds, fill_value=0).to_numpy()
         ok = counts >= 0.95 * baseline
-        recovery = None
         for i in range(len(ok) - 9):
             if ok[i:i + 10].all():
-                recovery = float(seconds[i] - ready)
-                break
-        out["recovery_s"] = max(recovery, 0.0) if recovery is not None else None
-        late = first[first["msg_id"].isin(during["msg_id"])]
-        if len(late):
-            last_arrival = ((late["alert_received_mono_ns"].max() - t0) / 1e9)
-            out["backlog_drain_s"] = max(0.0, last_arrival - ready)
-            out["backlog_max_latency_ms"] = float(late["latency_ms"].max())
+                return max(float(seconds[i] - ref), 0.0)
+        return None
+
+    late = first[first["msg_id"].isin(during["msg_id"])]
+    last_arrival = ((late["alert_received_mono_ns"].max() - t0) / 1e9) if len(late) else None
+    if baseline == baseline:
+        if restart is not None:
+            out["recovery_s"] = recovery_from(restart)
+        if ready is not None:
+            out["recovery_from_ready_s"] = recovery_from(ready)
+    if last_arrival is not None:
+        if restart is not None:
+            out["backlog_drain_s"] = max(0.0, last_arrival - restart)
+        if ready is not None:
+            out["backlog_drain_from_ready_s"] = max(0.0, last_arrival - ready)
+        due = late.merge(run.sent[["msg_id", "scheduled_mono_ns"]], on="msg_id", how="left")
+        out["backlog_max_latency_ms"] = float(late["latency_ms"].max())
+        out["backlog_max_age_ms"] = float(((due["alert_received_mono_ns"] - due["scheduled_mono_ns"]) / 1e6).max())
     return out
 
 

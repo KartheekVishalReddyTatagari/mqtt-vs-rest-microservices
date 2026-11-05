@@ -161,13 +161,18 @@ def write_summary(runs, comparisons, outages, path: Path, skipped, made) -> None
                   "With n = 3 per group the Mann-Whitney test cannot go below p = 0.1.", "", md_table(c), ""]
 
     if len(outages):
-        o = outages[["fault_target", "outage_s", "profile"] +
-                    [col for col in ("delivery_ratio_mean", "lost_mean", "duplicates_mean", "recovery_s_mean",
-                                     "backlog_drain_s_mean", "backlog_max_latency_ms_mean") if col in outages]].copy()
-        o["delivery_ratio_mean"] = o["delivery_ratio_mean"].map(lambda v: f"{v * 100:.1f}%")
+        names = {"delivery_ratio_mean": "delivered", "lost_mean": "lost", "duplicates_mean": "duplicates",
+                 "missed_deadlines_mean": "sent_late", "dispatch_lag_p99_ms_mean": "lag_p99_ms",
+                 "recovery_s_mean": "recovery_s", "backlog_drain_s_mean": "drain_s",
+                 "backlog_max_age_ms_mean": "max_age_ms"}
+        o = outages[["fault_target", "outage_s", "profile"] + [c for c in names if c in outages]].rename(columns=names)
+        o["delivered"] = o["delivered"].map(lambda v: f"{v * 100:.1f}%")
         for col in o.columns[4:]:
             o[col] = o[col].map(lambda v: fmt(v, 1))
-        lines += ["## Outages (E3): means over repetitions", "", md_table(o), ""]
+        lines += ["## Outages (E3): means over repetitions", "",
+                  "sent_late = readings the producer could not send within 10 ms of their due time; "
+                  "recovery and drain are measured from the restart command; max_age = oldest reading due "
+                  "during the outage, from its due time to its arrival.", "", md_table(o), ""]
 
     e6 = runs[runs["experiment"] == "E6"]
     if len(e6):
@@ -175,6 +180,8 @@ def write_summary(runs, comparisons, outages, path: Path, skipped, made) -> None
                                          lost=("lost", "mean"), duplicates=("duplicates", "mean"),
                                          unavailable_s=("fault_unavailable_s", "mean")).reset_index()
         b["delivered"] = b["delivered"].map(lambda v: f"{v * 100:.2f}%")
+        for col in ("lost", "duplicates", "unavailable_s"):
+            b[col] = b[col].map(lambda v: fmt(v, 1))
         lines += ["## Broker outage (E6, MQTT QoS 1)", "", md_table(b), ""]
 
     lines += ["## Figures", ""] + [f"- {Path(p).name}" for p in made]

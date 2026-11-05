@@ -191,8 +191,20 @@ Run order is shuffled within each experiment; finished runs are skipped on resta
 Analysis (`experiments/analysis/`): first 5 s excluded from steady-state latency;
 statistics on run-level values (one p95 per run), mean, SD, median, IQR and 95 % CI
 per configuration; REST vs MQTT with Welch's t, Mann-Whitney U, Cohen's d and
-Cliff's delta. Recovery time = from readiness until delivery >= 95 % of the
-pre-fault rate for 10 consecutive seconds; backlog drain = from readiness until
-the last message dispatched during the outage has arrived. System CPU/memory =
-sum of the per-service means of Processing, Alert and (MQTT) broker; the
-simulator is reported separately.
+Cliff's delta.
+
+Fault metrics. The outage window runs from the kill until the restarted service
+is ready, and a reading belongs to it when it was *due* in that window, whether
+or not the producer could send it on time (a blocked REST producer sends late).
+Recovery time = from the restart command until delivery reaches >= 95 % of the
+pre-fault rate for 10 consecutive seconds (1 s resolution); backlog drain = from
+the restart command until the last reading due in the window has arrived;
+backlog max age = the oldest such reading, from its due time to its arrival.
+Both are measured from the restart rather than from readiness because readiness
+is polled from the host, and the MQTT backlog often arrived before the poll
+noticed; the readiness-based values are kept as `*_from_ready_s`. Producer
+health (`missed_deadlines`, dispatch lag) is reported next to loss, because REST
+avoids part of its loss by blocking the producer.
+
+System CPU/memory = sum of the per-service means of Processing, Alert and (MQTT)
+broker; the simulator is reported separately.

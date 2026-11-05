@@ -22,7 +22,8 @@ SUMMARY_METRICS = [
     "dispatch_lag_p99_ms", "ack_p50_ms", "ack_p95_ms", "processing_ms_p50", "downstream_ms_p50",
     "cpu_system_pct", "mem_system_mib", "cpu_processing_pct", "cpu_alert_pct", "cpu_broker_pct",
     "cpu_sensor_simulator_pct", "mem_processing_mib", "mem_alert_mib", "mem_broker_mib",
-    "lost_during_outage", "sent_during_outage", "recovery_s", "backlog_drain_s", "backlog_max_latency_ms",
+    "lost_during_outage", "due_during_outage", "recovery_s", "backlog_drain_s", "backlog_max_latency_ms",
+    "backlog_max_age_ms", "recovery_from_ready_s", "backlog_drain_from_ready_s",
     "fault_unavailable_s", "sim_attempts_total", "proc_attempts_total",
 ]
 
@@ -95,8 +96,9 @@ def compare_faults(runs: pd.DataFrame) -> pd.DataFrame:
     faults = runs[runs["experiment"] == "E3"]
     if not len(faults):
         return pd.DataFrame()
-    cols = ["delivery_ratio", "lost", "lost_during_outage", "duplicates", "recovery_s", "backlog_drain_s",
-            "backlog_max_latency_ms", "lat_max_ms"]
+    cols = ["delivery_ratio", "lost", "lost_during_outage", "due_during_outage", "duplicates", "recovery_s",
+            "backlog_drain_s", "recovery_from_ready_s", "backlog_drain_from_ready_s", "backlog_max_latency_ms",
+            "backlog_max_age_ms", "lat_max_ms", "missed_deadlines", "dispatch_lag_p99_ms", "fault_unavailable_s"]
     present = [c for c in cols if c in faults]
     table = faults.groupby(["fault_target", "outage_s", "profile"])[present].agg(["mean", "min", "max"])
     table.columns = [f"{m}_{s}" for m, s in table.columns]
