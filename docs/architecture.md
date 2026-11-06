@@ -188,10 +188,12 @@ wait for the simulator, drain (all received, or 5 s without a new message, at
 most 90 s), stop gracefully, save logs, export results, write `meta.json`.
 Run order is shuffled within each experiment; finished runs are skipped on restart.
 
-Analysis (`experiments/analysis/`): first 5 s excluded from steady-state latency;
-statistics on run-level values (one p95 per run), mean, SD, median, IQR and 95 % CI
-per configuration; REST vs MQTT with Welch's t, Mann-Whitney U, Cohen's d and
-Cliff's delta.
+Analysis (`experiments/analysis/`): the campaign's warm-up (5 s reduced, 10 s
+full) excluded from steady-state latency; statistics on run-level values (one p95
+per run), mean, SD, median, IQR and 95 % CI per configuration; REST vs MQTT with
+Welch's t, Mann-Whitney U, Cohen's d and Cliff's delta. Runs are compared only
+within one experiment (one shuffled block), so QoS 1 measured in E1 and again in
+E5 is never pooled; the QoS study uses E5's own runs.
 
 Fault metrics. The outage window runs from the kill until the restarted service
 is ready, and a reading belongs to it when it was *due* in that window, whether

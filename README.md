@@ -69,11 +69,13 @@ Profiles: `rest`, `rest-retry`, `mqtt-q0`, `mqtt-q1`, `mqtt-q2`. Network profile
 ## Analysis
 
 ```bash
-python experiments/analysis/report.py results/raw/reduced
+python experiments/analysis/report.py results/raw/full      # or results/raw/reduced
 ```
 
 Writes `results/processed/<campaign>/` (run metrics, per-configuration summaries with 95% CIs,
 REST-vs-MQTT comparisons, outage table, `summary.md`) and `results/figures/<campaign>/`.
+The results of both campaigns are committed; `results/processed/full/summary.md` is the
+place to start. The raw run data (about 7 GB) stays out of git.
 
 ## Tests
 
