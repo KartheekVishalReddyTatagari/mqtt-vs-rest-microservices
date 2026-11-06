@@ -13,6 +13,7 @@ Raw data is never modified.
 """
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -73,7 +74,7 @@ def main() -> None:
             key = (m["fault_target"], m["outage_s"])
             timelines.setdefault(key, {})[m["profile"]] = (timeline(run), fault_events_rel(run))
         if m["experiment"] == "E6" and m["repetition"] == 1:
-            broker_timelines[m["fault_mode"]] = (timeline(run), fault_events_rel(run))
+            broker_timelines.setdefault(m["outage_s"], {})[m["fault_mode"]] = (timeline(run), fault_events_rel(run))
     runs = pd.DataFrame(rows)
     if runs.empty:
         sys.exit("no complete runs found")
@@ -99,15 +100,15 @@ def main() -> None:
             {p: tl for p, (tl, _) in per_profile.items()}, {p: ev for p, (_, ev) in per_profile.items()},
             fig_dir, f"fig5_timeline_{target}_{int(outage)}s",
             f"{target.capitalize()} Service killed for {outage:g} s at 200 msg/s (repetition 1)"))
-    if broker_timelines:
-        made.append(_broker_figure(broker_timelines, fig_dir))
+    for outage, per_mode in sorted(broker_timelines.items()):
+        made.append(_broker_figure(per_mode, outage, fig_dir))
     made = [p for p in made if p]
 
     write_summary(runs, comparisons, outages, processed / "summary.md", skipped, made)
     print(f"{len(runs)} runs analysed, {len(skipped)} skipped; {len(made)} figures in {fig_dir}")
 
 
-def _broker_figure(broker_timelines: dict, fig_dir: Path) -> Path | None:
+def _broker_figure(broker_timelines: dict, outage: float, fig_dir: Path) -> Path | None:
     import matplotlib.pyplot as plt
     modes = [m for m in ("graceful", "abrupt") if m in broker_timelines]
     fig, axes = plt.subplots(len(modes), 1, figsize=(8, 1.6 * len(modes) + 0.6), sharex=True, sharey=True)
@@ -122,10 +123,10 @@ def _broker_figure(broker_timelines: dict, fig_dir: Path) -> Path | None:
                 fontweight="bold", color=figures.INK)
     axes[-1].set_xlabel("seconds since the first message (grey band = broker down until ready again)")
     fig.supylabel("delivered per second", fontsize=9.5, color=figures.INK2)
-    fig.suptitle("MQTT QoS 1, broker down for 10 s at 200 msg/s (repetition 1)", x=0.01, ha="left",
+    fig.suptitle(f"MQTT QoS 1, broker down for {outage:g} s at 200 msg/s (repetition 1)", x=0.01, ha="left",
                  fontsize=10, fontweight="bold")
     fig.tight_layout()
-    return figures._save(fig, fig_dir, "fig9_broker_outage")
+    return figures._save(fig, fig_dir, f"fig9_broker_outage_{int(outage)}s")
 
 
 def write_summary(runs, comparisons, outages, path: Path, skipped, made) -> None:
@@ -135,30 +136,33 @@ def write_summary(runs, comparisons, outages, path: Path, skipped, made) -> None
 
     steady = runs[runs["fault_kind"].isna()]
     if len(steady):
-        g = steady.groupby(["profile", "rate", "netem"])
+        g = steady.groupby(["experiment", "profile", "rate", "netem"])
         t = g.agg(n=("run_id", "count"), p50=("lat_p50_ms", "mean"), p95=("lat_p95_ms", "mean"),
                   p99=("lat_p99_ms", "mean"), delivered=("delivery_ratio", "mean"),
                   rate_ok=("achieved_dispatch_rate", "mean"), missed=("missed_deadlines", "mean"),
                   cpu=("cpu_system_pct", "mean"), mem=("mem_system_mib", "mean")).reset_index()
-        t = t.sort_values(["netem", "rate", "profile"])
+        t = t.sort_values(["experiment", "netem", "rate", "profile"])
         for c in ("p50", "p95", "p99", "rate_ok", "missed", "cpu", "mem"):
             t[c] = t[c].map(lambda v: fmt(v, 1 if c in ("rate_ok", "missed", "cpu", "mem") else 2))
         t["delivered"] = t["delivered"].map(lambda v: f"{v * 100:.2f}%")
         lines += ["## Steady state (E1, E2, E5): means over repetitions", "",
                   "Latency in ms; CPU in % of one core and memory in MiB, summed over Processing, Alert "
-                  "and (MQTT) broker.", "", md_table(t), ""]
+                  "and (MQTT) broker. Runs are grouped by experiment, so QoS 1 in E1 and in E5 are separate "
+                  "rows.", "", md_table(t), ""]
 
     if len(comparisons):
         c = comparisons[comparisons["metric"].isin(["lat_p50_ms", "lat_p99_ms", "cpu_system_pct", "mem_system_mib"])]
-        c = c[["rate", "netem", "metric", "mean_a", "mean_b", "ratio_b_over_a", "welch_p", "mannwhitney_p",
-               "cliffs_delta"]].copy()
+        n_min, n_max = int(min(c["n_a"].min(), c["n_b"].min())), int(max(c["n_a"].max(), c["n_b"].max()))
+        c = c[["experiment", "rate", "netem", "metric", "n_a", "n_b", "mean_a", "mean_b", "ratio_b_over_a",
+               "welch_p", "mannwhitney_p", "cliffs_delta"]].copy()
         for col in ("mean_a", "mean_b", "ratio_b_over_a"):
             c[col] = c[col].map(lambda v: fmt(v, 2))
         for col in ("welch_p", "mannwhitney_p", "cliffs_delta"):
             c[col] = c[col].map(lambda v: fmt(v, 3))
         lines += ["## REST (a) vs MQTT QoS 1 (b), run-level statistics", "",
                   "Cliff's delta: +1 = every MQTT run higher than every REST run, -1 = every one lower. "
-                  "With n = 3 per group the Mann-Whitney test cannot go below p = 0.1.", "", md_table(c), ""]
+                  f"n = {n_min} to {n_max} runs per group; the smallest p a Mann-Whitney test can give is "
+                  f"{2 / math.comb(2 * n_min, n_min):.2g} at n = {n_min}.", "", md_table(c), ""]
 
     if len(outages):
         names = {"delivery_ratio_mean": "delivered", "lost_mean": "lost", "duplicates_mean": "duplicates",
@@ -176,11 +180,15 @@ def write_summary(runs, comparisons, outages, path: Path, skipped, made) -> None
 
     e6 = runs[runs["experiment"] == "E6"]
     if len(e6):
-        b = e6.groupby("fault_mode").agg(n=("run_id", "count"), delivered=("delivery_ratio", "mean"),
-                                         lost=("lost", "mean"), duplicates=("duplicates", "mean"),
-                                         unavailable_s=("fault_unavailable_s", "mean")).reset_index()
+        b = e6.groupby(["outage_s", "fault_mode"]).agg(
+            n=("run_id", "count"), delivered=("delivery_ratio", "mean"), lost=("lost", "mean"),
+            duplicates=("duplicates", "mean"), sent_late=("missed_deadlines", "mean"),
+            lag_p99_ms=("dispatch_lag_p99_ms", "mean"), recovery_s=("recovery_s", "mean"),
+            drain_s=("backlog_drain_s", "mean"), max_age_ms=("backlog_max_age_ms", "mean"),
+            unavailable_s=("fault_unavailable_s", "mean")).reset_index()
         b["delivered"] = b["delivered"].map(lambda v: f"{v * 100:.2f}%")
-        for col in ("lost", "duplicates", "unavailable_s"):
+        for col in ("lost", "duplicates", "sent_late", "lag_p99_ms", "recovery_s", "drain_s", "max_age_ms",
+                    "unavailable_s"):
             b[col] = b[col].map(lambda v: fmt(v, 1))
         lines += ["## Broker outage (E6, MQTT QoS 1)", "", md_table(b), ""]
 

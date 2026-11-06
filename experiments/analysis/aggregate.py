@@ -4,16 +4,21 @@ Statistics are computed on RUN-LEVEL values (one p95 per run, not every
 message pooled), because messages within a run are not independent
 repetitions (plan, section 6.1).
 
-With n = 3 runs per group, a two-sided Mann-Whitney U test cannot reach
-p < 0.05 (its smallest possible p is 0.1). Welch's t-test is reported too,
-but the emphasis is on effect sizes and confidence intervals.
+The smallest p a two-sided Mann-Whitney U test can give is 2 / C(2n, n):
+0.1 with n = 3 runs per group (reduced campaign), 0.008 with n = 5 and
+0.00001 with n = 10 (full campaign). Welch's t-test is reported too, and
+effect sizes (Cohen's d, Cliff's delta) next to both.
+
+Steady-state results are grouped by experiment as well as configuration, so
+a comparison only uses runs from the same shuffled block. The QoS 1 runs of
+E1 and E5 were made hours apart and are not pooled.
 """
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 
-STEADY_KEYS = ["profile", "arch", "qos", "rate", "netem"]
+STEADY_KEYS = ["experiment", "profile", "arch", "qos", "rate", "netem"]
 FAULT_KEYS = ["experiment", "profile", "arch", "qos", "rate", "fault_target", "fault_mode", "outage_s"]
 
 SUMMARY_METRICS = [
@@ -65,10 +70,10 @@ def cliffs_delta(a: np.ndarray, b: np.ndarray) -> float:
 def compare(runs: pd.DataFrame, a_profile: str = "rest", b_profile: str = "mqtt-q1",
             metrics: tuple = ("lat_p50_ms", "lat_p95_ms", "lat_p99_ms", "throughput_msg_s",
                               "cpu_system_pct", "mem_system_mib", "delivery_ratio")) -> pd.DataFrame:
-    """REST vs MQTT at every steady-state (rate, netem) condition both ran."""
+    """REST vs MQTT at every steady-state (rate, netem) condition both ran in the same experiment."""
     steady = runs[runs["fault_kind"].isna()]
     rows = []
-    for (rate, netem), group in steady.groupby(["rate", "netem"]):
+    for (experiment, rate, netem), group in steady.groupby(["experiment", "rate", "netem"]):
         a = group[group["profile"] == a_profile]
         b = group[group["profile"] == b_profile]
         if len(a) < 2 or len(b) < 2:
@@ -79,7 +84,8 @@ def compare(runs: pd.DataFrame, a_profile: str = "rest", b_profile: str = "mqtt-
                 continue
             pooled = np.sqrt(((len(x) - 1) * x.var(ddof=1) + (len(y) - 1) * y.var(ddof=1)) / (len(x) + len(y) - 2))
             rows.append({
-                "rate": rate, "netem": netem, "metric": metric, "a": a_profile, "b": b_profile,
+                "experiment": experiment, "rate": rate, "netem": netem, "metric": metric,
+                "a": a_profile, "b": b_profile,
                 "n_a": len(x), "n_b": len(y), "mean_a": x.mean(), "mean_b": y.mean(),
                 "diff_b_minus_a": y.mean() - x.mean(),
                 "ratio_b_over_a": y.mean() / x.mean() if x.mean() else float("nan"),

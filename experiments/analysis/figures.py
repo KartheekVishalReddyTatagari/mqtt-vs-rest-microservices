@@ -199,8 +199,20 @@ def resources(runs: pd.DataFrame, out: Path, metric_prefix: str = "cpu", unit: s
     return _save(fig, out, name)
 
 
-def qos_tradeoff(runs: pd.DataFrame, out: Path) -> Path | None:
+def qos_runs(runs: pd.DataFrame) -> pd.DataFrame:
+    """Steady MQTT runs for the QoS study: E5's own runs, plus runs from other experiments
+    only for a (profile, rate, netem) that E5 did not measure itself (the reduced campaign
+    reused QoS 1 from E1 and E2)."""
     steady = runs[runs["fault_kind"].isna() & runs["profile"].str.startswith("mqtt")]
+    config = steady["profile"] + "|" + steady["rate"].astype(str) + "|" + steady["netem"]
+    cond = steady["rate"].astype(str) + "|" + steady["netem"]
+    in_e5 = steady["experiment"] == "E5"
+    reuse = ~in_e5 & ~config.isin(set(config[in_e5])) & cond.isin(set(cond[in_e5]))
+    return steady[in_e5 | reuse]
+
+
+def qos_tradeoff(runs: pd.DataFrame, out: Path) -> Path | None:
+    steady = qos_runs(runs)
     conds = [(r, n) for r in (100, 1000) for n in ("none", "loss1")
              if len(steady[(steady["rate"] == r) & (steady["netem"] == n)])]
     if not conds:
